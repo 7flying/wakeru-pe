@@ -13,11 +13,12 @@ ROW = "'{0}',{1}\n"
 
 # Keel header, put inst names and min-max count on {2}. All at {2}
 # put comma separated inst names at {3}
-HEADER_KEEL = "@relation {0}\n@attribute sections integer [{0}-{1}]\n" +\
+HEADER_KEEL = "@relation {0}\n@attribute sections integer [1.0, {1}]\n" +\
   "@attribute avgentropy real [0.0, 8.0]\n{2}" +\
-  "@attribute $class$ {malware, goodware}\n@inputs sections, avgentropy, {3}\n" +\
+  "@attribute $class$ {{malware, goodware}}\n@inputs sections, avgentropy, {3}\n" +\
   "@outputs $class$\n@data\n"
 
+ATTRIBUTE_INST = "@attribute {0} real [0.0, {1}]\n"
 
 def disassemble(path_to_file):
     """Disassembles the .text section of the given file.
@@ -33,6 +34,7 @@ def disassemble(path_to_file):
     return out
 
 def objdump(path_to_file, path_to_output_folder):
+    """Classic objdump -d"""
     error = False
     error_file = open('objdumerr.txt', 'a')
     filename = ntpath.basename(path_to_file)
@@ -61,7 +63,6 @@ def objdump_all(path_to_folders, path_to_out_folders, max_samples):
             if not err:
                 count += 1
                 print "[{0}/{1}] Processed: {2}".format(count, maxi, sample)
-                
 
 def get_mnemonics(path_to_file):
     """Returns a dict with the opcode mnemonic and number of times it has been
@@ -76,7 +77,6 @@ def get_mnemonics(path_to_file):
                 if ret.get(code) is None:
                     ret[code] = 0
                 ret[code] += 1
-    print ret
     return ret
 
 def get_mnemonics_folders(folder_list, max_samples=5):
@@ -127,10 +127,11 @@ def _get_different_instructions(list_hex_folders, max_samples):
             if count >= max_samples:
                 break
             if isfile(join(folder, sample)):
-                ret.update(_get_set_mnemonics(join(folder,sample)))
+                ret.update(_get_set_mnemonics(join(folder, sample)))
     return ret
 
-def gen_keel_arff(tuple_goodware, tuple_malware, max_samples=2):
+def gen_keel_arff(tuple_goodware, tuple_malware, max_samples=52,
+                  relation="ai-wakeru", backup_name="samples-backup.txt"):
     """Generates a keel arff, where tuple_<class> has: folder hex files,
     folder pe files, class name (goodware or malware).
     """
@@ -142,8 +143,70 @@ def gen_keel_arff(tuple_goodware, tuple_malware, max_samples=2):
     temp_time = datetime.datetime.now()
     print " [{0}] Num. different instructions: {1}".format(
         temp_time.strftime(time_format), len(diff_inst))
-    
-    
+    # NOTE: to header
+    inst_max_counts = dict(zip(diff_inst, (0 for _ in range(len(diff_inst)))))
+    # Get inst usage, sections and entropy
+    data = []
+    sample_count = 1
+    max_sections = 0 # NOTE: to header
+    for hex_folder, pe_folder, class_ in [tuple_goodware, tuple_malware]:
+        max_count = 0
+        for sample in listdir(pe_folder):
+            if max_count >= max_samples:
+                break
+            temp_time = (datetime.datetime.now()).strftime(time_format)
+            print " [{0}] Processing {1}/{2}: {3}".format(temp_time,
+                                                          sample_count,
+                                                          max_samples * 2,
+                                                          sample)
+            sections, avg_entro = get_pe_info(join(pe_folder, sample))
+            if sections > max_sections:
+                max_sections = sections
+            inst_count = get_mnemonics(join(hex_folder, sample + '.hex'))
+            for inst in inst_max_counts.keys():
+                if inst_count.get(inst) is None:
+                    inst_count[inst] = 0
+                else:
+                    if inst_count[inst] > inst_max_counts[inst]:
+                        inst_max_counts[inst] = inst_count[inst]
+            data.append({'sample': sample, 'sections': sections,
+                         'entropy': avg_entro, 'insts': inst_count,
+                         'class': class_})
+            max_count += 1
+            sample_count += 1
+    temp_time = (datetime.datetime.now()).strftime(time_format)
+    print " [{0}] Sample processing finished.".format(temp_time)
+    with open(backup_name, 'w') as backup:
+        for sample in data:
+            backup.write(str(sample))
+            backup.write("\n")
+    temp_time = (datetime.datetime.now()).strftime(time_format)
+    print " [{0}] Backup ({1}) created.".format(temp_time, backup_name)
+    # Generate header
+    inst_attributes = ""
+    for inst in inst_max_counts.keys():
+        tmp_str = ATTRIBUTE_INST.format(inst, str(float(inst_max_counts[inst])))
+        inst_attributes += (tmp_str)
+    keel_header = HEADER_KEEL.format(relation, str(float(max_sections)),
+                                     inst_attributes,
+                                     ', '.join(inst_max_counts.keys()))
+    with open(relation + '.arff', 'w') as keel_file:
+        keel_file.write(keel_header)
+        temp_time = (datetime.datetime.now()).strftime(time_format)
+        print " [{0}] Header generated, inserting data.".format(temp_time)
+        sample_count = 0
+        # Populate data
+        for sample in data:
+            temp_write = str(sample['sections']) + ', ' + str(sample['entropy'])
+            for inst in inst_max_counts.keys():
+                if sample['insts'].get(inst) is None:
+                    temp_write += ', 0.0'
+                else:
+                    temp_write += ', ' + str(float(sample['insts'][inst]))
+            temp_write += ', ' + sample['class']
+            keel_file.write(temp_write + '\n')
+    temp_time = (datetime.datetime.now()).strftime(time_format)
+    print " [{0}] All done!".format(temp_time)
 
 def main(dataset_name, malware_path, goodware_path, count_samples=50):
     """Disassembles PE files on malware_path and goodware_path folders,
@@ -173,7 +236,6 @@ if __name__ == '__main__':
     """
     mnemonics = get_mnemonics_folders(argv[1:])
     print mnemonics
-    
     if len(argv) == 4:
         main(argv[1], argv[2], argv[3])
     elif len(argv) == 5:
