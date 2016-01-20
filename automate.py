@@ -3,16 +3,11 @@
 Automates the dataset generation process.
 """
 import subprocess, re, ntpath, random, string, pefile, datetime
-from sys import argv
 from os import listdir
 from os.path import isfile, join
 
-HEADER = "@relation {0}\n@attribute code string\n@attribute $category$"+\
-  " {{malware, goodware}}\n@data\n"
-ROW = "'{0}',{1}\n"
-
-# Keel header, put inst names and min-max count on {2}. All at {2}
-# put comma separated inst names at {3}
+# Keel header, put inst names and min-max count
+# and comma separated inst names
 HEADER_KEEL = "@relation {0}\n@attribute sections integer [1.0, {1}]\n" +\
   "@attribute avgentropy real [0.0, 8.0]\n{2}" +\
   "@attribute $class$ {{malware, goodware}}\n@inputs sections, avgentropy, {3}\n" +\
@@ -207,40 +202,3 @@ def gen_keel_arff(tuple_goodware, tuple_malware, max_samples=52,
             keel_file.write(temp_write + '\n')
     temp_time = (datetime.datetime.now()).strftime(time_format)
     print " [{0}] All done!".format(temp_time)
-
-def main(dataset_name, malware_path, goodware_path, count_samples=50):
-    """Disassembles PE files on malware_path and goodware_path folders,
-    generates an .arff with them."""
-    with open(dataset_name, 'w') as dataset:
-        dataset.write(HEADER.format(dataset_name))
-        for class_, path in zip(['malware', 'goodware'],
-                                 [malware_path, goodware_path]):
-            count = 0
-            for sample in listdir(path):
-                print " [ INFO ] count: %d, processing sample %s, %s" % (count,
-                                                                         sample,
-                                                                         class_)
-                if count > count_samples:
-                    break
-                if isfile(join(path, sample)):
-                    dis = disassemble(join(path, sample))
-                    dis = dis.strip()
-                    if dis and len(dis) > 0:
-                        dataset.write(ROW.format(dis, class_))
-                        count += 1
-            print " [ INFO ] Processed %d samples of class: '%s'" % (count,
-                                                                     class_)
-
-if __name__ == '__main__':
-    get_mnemonics(argv[1])
-    """
-    mnemonics = get_mnemonics_folders(argv[1:])
-    print mnemonics
-    if len(argv) == 4:
-        main(argv[1], argv[2], argv[3])
-    elif len(argv) == 5:
-        main(argv[1], argv[2], argv[3], int(argv[4]))
-    else:
-        print "Usage:\n automate.py dataset_name malware_path" + \
-          " goodware_path [samples_per_class]"
-    """
